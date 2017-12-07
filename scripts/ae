@@ -1,0 +1,109 @@
+#!/bin/usr/python
+# -*- coding: utf-8 -*-
+# @Author: YangZhou
+# @Date:   2016-09-05 19:33:20
+# @Last Modified by:   YangZhou
+# @Last Modified time: 2017-05-25 09:32:10
+
+
+from aces.tools import *
+from optparse import OptionParser
+
+import sys
+import json
+parser = OptionParser()
+parser.set_defaults(
+    use_pbs=False,use_script=False,reduce_project=False)
+parser.add_option("-p","--pbs", dest="use_pbs",
+                  action="store_true", help="Use PBS to run this script")
+parser.add_option("-c", dest="use_script",
+                  action="store_true", help="Use ACES script rather than project method")
+parser.add_option("-r", dest="reduce_project",
+                  action="store_true", help="Reduce the folders in this project")
+(options, args) = parser.parse_args()
+
+def run(a):
+	from aces.App import App
+	r=App().runner
+	m=App().m
+	print("Searching in aces.runners.%s..."%m.runner)
+	if not hasattr(r,a):
+		print('Method %s does not exist in aces.runners.%s'%(a,m.runner))
+		return False
+	getattr(r,a)()
+	return True
+def run_script(a):
+	import aces.script as r
+	print("Searching in aces.script...")
+	if not hasattr(r,a):
+		print('Method %s does not exist in aces.script'%a)
+		return False
+	getattr(r,a)()
+	return True
+def process_git():
+	mkdir('.project')
+	cd('.project')
+	if(not exists('.git')):
+		shell_exec("git init")
+		write("_gsdata_",".gitignore")
+	d=ls()
+	for x in d:
+		if(x.find(".git")>=0):continue
+		if(x.find("_gsdata_")>=0):continue
+		shell_exec("rm %s -r"%x)
+	cd('..')
+	passthru("find .  -path ./.project  -prune -o -name '*.py' -print| cpio -pdm .project 2>/dev/null ;cd .project;git add .;git commit -am \"%s\""%(sys.argv[2]))
+	
+def process_pbs():
+	from aces.pbs.jobManager import pbs
+	from aces.App import App
+	from aces import config
+	m=App().m
+	nodes=m.nodes
+	procs=m.procs
+	job=pbs(queue=m.queue,
+		nodes=nodes,
+		procs=procs,
+		disp=m.pbsname,
+		path=pwd(),
+		content= 'ae '+' '.join(args)+' >aces.out')
+	cd(job.path)
+	job.writepbs()
+	job.submit()
+def process_reduce(a):
+	if not exists("qloops.txt"):
+		print("ERROR: qloops.txt not found!")
+		return
+	import aces.tools
+	aces.tools.printCommand=False
+	obj=[json.loads(json_string) for  json_string in open("qloops.txt")]
+	for i in range(len(obj)):
+		l=str(i)
+		cd(l)
+		run(a)
+		cd('..')
+	aces.tools.printCommand=True
+def exe():
+	if(len(args)==0):
+		print("ERROR: Please input args!")
+		sys.exit()
+	a=args[0]
+	if a=="app":
+		from aces.App import App
+		App().execute()
+		sys.exit()
+	if a=="git":
+		process_git()
+		sys.exit()
+	if options.use_pbs:
+		process_pbs()
+		sys.exit()
+	if options.reduce_project:
+		process_reduce(a)
+		sys.exit()
+	if run_script(a):
+		sys.exit()
+	if run(a):
+		sys.exit()
+if __name__=="__main__":
+	exe()
